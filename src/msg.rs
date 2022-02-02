@@ -2,7 +2,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use cosmwasm_std::{Binary, Coin, HumanAddr, Uint128};
+use cosmwasm_std::{Binary, Coin, HumanAddr};
 use secret_toolkit::permit::Permit;
 
 use crate::expiration::Expiration;
@@ -10,7 +10,7 @@ use crate::mint_run::{MintRunInfo, SerialNumber};
 use crate::royalties::{DisplayRoyaltyInfo, RoyaltyInfo};
 use crate::token::{Extension, Metadata};
 
-use crate::state::{PreLoad};
+use crate::state::{Config, PreLoad};
 
 /// Instantiation message
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -33,14 +33,8 @@ pub struct InitMsg {
     /// contract that instantiated it, but it could be used to execute any
     /// contract
     pub post_init_callback: Option<PostInitCallback>,
-
-    /// Stores callback hash for snip20 contract
-    pub snip20_hash: String,
-    /// Stores snip20 token contract address
-    pub snip20_address: HumanAddr,
-
     /// The list of addreses to divide up on initial mint
-    pub mint_funds_distribution_info: Option<RoyaltyInfo>
+    pub mint_funds_distribution_info: Option<RoyaltyInfo>,
 }
 
 /// This type represents optional configuration values.
@@ -80,6 +74,8 @@ pub struct InitConfig {
     /// Indicates whether burn functionality should be enabled
     /// default: False
     pub enable_burn: Option<bool>,
+    /// The time when the minting will start, before that users can
+    pub mint_start_time: Option<u64>,
 }
 
 impl Default for InitConfig {
@@ -92,6 +88,7 @@ impl Default for InitConfig {
             minter_may_update_metadata: Some(false),
             owner_may_update_metadata: Some(false),
             enable_burn: Some(false),
+            mint_start_time: None,
         }
     }
 }
@@ -109,36 +106,28 @@ pub struct PostInitCallback {
     pub send: Vec<Coin>,
 }
 
-
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HandleReceiveMsg {
-    ReceiveMint { },
+    ReceiveMint {},
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HandleMsg {
-    /// Receive Snip20 Payment
-    Receive {
-        sender: HumanAddr,
-        from: HumanAddr,
-        amount: Uint128,
-        #[serde(default)]
-        msg: Option<Binary>,
+    Mint {
+        count: u16,
     },
     /// Preloads metadata for random mints
     PreLoad {
-        new_data: Vec<PreLoad>
+        new_data: Vec<PreLoad>,
     },
     /// Preloads whitelist data
     LoadWhitelist {
-        whitelist: Vec<HumanAddr>
+        whitelist: Vec<HumanAddr>,
     },
     /// Deactivates whitelist
-    DeactivateWhitelist {
-
-    },
+    DeactivateWhitelist {},
     /// set the public and/or private metadata.  This can be called by either the token owner or
     /// a valid minter if they have been given this power by the appropriate config values
     SetMetadata {
@@ -364,6 +353,9 @@ pub enum HandleMsg {
         /// optional message length padding
         padding: Option<String>,
     },
+    ChangeConfig {
+        new_config: Config,
+    },
     /// set contract status level to determine which functions are allowed.  StopTransactions
     /// status prevent mints, burns, sends, and transfers, but allows all other functions
     SetContractStatus {
@@ -378,6 +370,14 @@ pub enum HandleMsg {
         permit_name: String,
         /// optional message length padding
         padding: Option<String>,
+    },
+    PreorderNFT {},
+    RedeemPreorder {},
+    StampWord {
+        token_id: String,
+        word_id: u16,
+        points: u16,
+        callee: HumanAddr,
     },
 }
 
@@ -453,12 +453,12 @@ pub struct Send {
 #[serde(rename_all = "snake_case")]
 pub enum HandleAnswer {
     ToPub {
-        status: ResponseStatus, 
+        status: ResponseStatus,
     },
-    /// MintNft will also display the minted token's ID in the log attributes under the
+    /// MintNft will also display the minted token's IDs in the log attributes under the
     /// key `minted` in case minting was done as a callback message
     MintNft {
-        token_id: String,
+        token_ids: String,
     },
     /// BatchMintNft will also display the minted tokens' IDs in the log attributes under the
     /// key `minted` in case minting was done as a callback message
@@ -542,10 +542,16 @@ pub enum HandleAnswer {
     ChangeAdmin {
         status: ResponseStatus,
     },
+    ChangeConfig {
+        status: ResponseStatus,
+    },
     SetContractStatus {
         status: ResponseStatus,
     },
     RevokePermit {
+        status: ResponseStatus,
+    },
+    StampWord {
         status: ResponseStatus,
     },
 }

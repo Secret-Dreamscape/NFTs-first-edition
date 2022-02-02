@@ -1,5 +1,5 @@
-use std::any::type_name;
 use schemars::JsonSchema;
+use std::any::type_name;
 
 use cosmwasm_std::{Api, BlockInfo, CanonicalAddr, ReadonlyStorage, StdError, StdResult, Storage};
 use cosmwasm_storage::{PrefixedStorage, ReadonlyPrefixedStorage};
@@ -30,6 +30,8 @@ pub const WHITELIST_COUNT_KEY: &[u8] = b"whitelistcount";
 pub const WHITELIST_ACTIVE_KEY: &[u8] = b"whitelistactive";
 /// Whitelist prefix
 pub const PREFIX_WHITELIST: &[u8] = b"whitelistprefix";
+/// Preorder prefix
+pub const PREFIX_PREORDER: &[u8] = b"preorderprefix";
 
 /// storage key for config
 pub const CONFIG_KEY: &[u8] = b"config";
@@ -73,13 +75,11 @@ pub const PREFIX_OWNER_PRIV: &[u8] = b"ownerpriv";
 pub const PREFIX_VIEW_KEY: &[u8] = b"viewkeys";
 /// prefix for the storage of the code hashes of contract's that have implemented ReceiveNft
 pub const PREFIX_RECEIVERS: &[u8] = b"receivers";
-/// prefix for the storage of mint run numbers
-pub const PREFIX_MINT_RUN_NUM: &[u8] = b"runnum";
 /// prefix for the storage of revoked permits
 pub const PREFIX_REVOKED_PERMITS: &str = "revoke";
 
 /// Token contract config
-#[derive(Serialize, Debug, Deserialize, Clone, PartialEq)]
+#[derive(Serialize, JsonSchema, Debug, Deserialize, Clone, PartialEq)]
 pub struct Config {
     /// name of token contract
     pub name: String,
@@ -109,6 +109,8 @@ pub struct Config {
     pub owner_may_update_metadata: bool,
     /// is burn enabled
     pub burn_is_enabled: bool,
+    /// mint start time
+    pub mint_start_time: u64,
 }
 
 /// tx type and specifics
@@ -465,21 +467,16 @@ pub struct ReceiveRegistration {
     pub impl_batch: bool,
 }
 
-
 /// Preloaded data storage for the tokens during init
 #[derive(Serialize, Deserialize, Clone, JsonSchema, PartialEq, Debug)]
-pub struct  PreLoad {
+pub struct PreLoad {
     pub id: String,
     pub img_url: String,
     pub priv_img_url: String,
-    pub attributes : Option<Vec<Trait>>,
+    pub attributes: Option<Vec<Trait>>,
     pub priv_attributes: Option<Vec<Trait>>,
     pub priv_key: String,
 }
-
-
-
-
 
 /// Returns StdResult<()> resulting from saving an item to storage
 ///
@@ -553,7 +550,7 @@ pub fn json_save<T: Serialize, S: Storage>(
 }
 
 /// Returns StdResult<T> from retrieving the item with the specified key using Json
-/// (de)serialization because bincode2 annoyingly uses a float op when deserializing an enum.  
+/// (de)serialization because bincode2 annoyingly uses a float op when deserializing an enum.
 /// Returns a StdError::NotFound if there is no item with that key
 ///
 /// # Arguments

@@ -1,8 +1,10 @@
-use crate::state::{may_load, remove, save};
+use std::collections::HashSet;
+
 use cosmwasm_std::{CanonicalAddr, ReadonlyStorage, StdError, StdResult, Storage};
 use cosmwasm_storage::{PrefixedStorage, ReadonlyPrefixedStorage};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+
+use crate::state::{may_load, remove, save};
 
 /// storage prefix for an owner's inventory information
 pub const PREFIX_INVENTORY_INFO: &[u8] = b"invinfo";

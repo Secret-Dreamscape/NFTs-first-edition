@@ -12,15 +12,11 @@ clippy:
 	cargo clippy
 
 .PHONY: test
-test: unit-test integration-test
+test: unit-test
 
 .PHONY: unit-test
 unit-test:
 	cargo test
-
-.PHONY: integration-test
-integration-test: compile-optimized 
-	tests/integration.sh
 
 .PHONY: list-code
 list-code:
