@@ -17,7 +17,7 @@ use secret_toolkit::{
     utils::{pad_handle_result, pad_query_result},
 };
 
-use crate::inventory::{Inventory, InventoryIter};
+use crate::expiration::Expiration;
 use crate::mint_run::StoredMintRunInfo;
 use crate::msg::{
     AccessLevel, Burn, ContractStatus, Cw721Approval, Cw721OwnerOfResponse, HandleAnswer,
@@ -39,7 +39,10 @@ use crate::state::{
 };
 use crate::token::{Extension, MediaFile, Metadata, Token};
 use crate::viewing_key::{ViewingKey, VIEWING_KEY_SIZE};
-use crate::{expiration::Expiration, state::PREFIX_PREORDER};
+use crate::{
+    inventory::{Inventory, InventoryIter},
+    state::PREFIX_FREEMINTS,
+};
 
 /// pad handle responses and log attributes to blocks of 256 bytes to prevent leaking info based on
 /// response size
@@ -96,7 +99,6 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
         minter_may_update_metadata: init_config.minter_may_update_metadata.unwrap_or(false),
         owner_may_update_metadata: init_config.owner_may_update_metadata.unwrap_or(false),
         burn_is_enabled: init_config.enable_burn.unwrap_or(true),
-        mint_start_time: init_config.mint_start_time.unwrap_or(0),
     };
 
     let count: u16 = 0;
@@ -417,135 +419,30 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             callee,
         } => stamp_word(deps, env, &config, &token_id, word_id, points, callee),
         HandleMsg::Mint { count } => mint(deps, env, &mut config, count),
-        HandleMsg::PreorderNFT {} => preorder_nft(deps, env, &mut config),
-        HandleMsg::RedeemPreorder {} => redeem_preorder(deps, env, &mut config),
+        HandleMsg::AllowFreeMints { addr } => allow_free_mints(deps, env, &mut config, addr),
     };
     pad_handle_result(response, BLOCK_SIZE)
 }
 
-fn preorder_nft<S: Storage, A: Api, Q: Querier>(
+fn allow_free_mints<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
     config: &mut Config,
+    addr: HumanAddr,
 ) -> Result<HandleResponse, StdError> {
-    if env.block.time > config.mint_start_time {
-        return Err(StdError::generic_err(
-            "It's too late to preorder now, the mint started already".to_string(),
-        ));
-    }
-
-    if env.message.sent_funds.len() != 1 {
-        return Err(StdError::generic_err(
-            "This function requires a non-zero amount of funds to be sent",
-        ));
-    }
-
-    if env.message.sent_funds[0].denom != "uscrt" {
-        return Err(StdError::generic_err(
-            "This function requires a denomination of 'uscrt'",
-        ));
-    }
-
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
-
-    let amount_sent = env.message.sent_funds[0].amount;
-
-    let mut preorder_store = PrefixedStorage::new(PREFIX_PREORDER, &mut deps.storage);
-
-    let user_amount: Option<u128> = may_load(&preorder_store, sender_raw.as_slice())?;
-
-    let total = amount_sent.u128()
-        + match user_amount {
-            Some(amount) => amount,
-            None => 0,
-        };
-
-    save(&mut preorder_store, sender_raw.as_slice(), &total)?;
-
-    Ok(HandleResponse {
-        messages: vec![CosmosMsg::Bank(BankMsg::Send {
-            from_address: env.contract.address.clone(),
-            to_address: env.message.sender.clone(),
-            amount: vec![Coin {
-                amount: amount_sent,
-                denom: "uscrt".to_string(),
-            }],
-        })],
-        log: vec![],
-        data: None,
-    })
-}
-
-fn redeem_preorder<S: Storage, A: Api, Q: Querier>(
-    deps: &mut Extern<S, A, Q>,
-    env: Env,
-    config: &mut Config,
-) -> Result<HandleResponse, StdError> {
-    if env.block.time < config.mint_start_time {
+    if sender_raw != config.admin {
         return Err(StdError::generic_err(
-            "It's too early to redeem now, the mint hasn't started yet".to_string(),
+            "Only the admin can call this function, sorry!",
         ));
     }
 
-    let sender_raw = deps.api.canonical_address(&env.clone().message.sender)?;
+    let addr_raw = deps.api.canonical_address(&addr)?;
 
-    let preorder_store = PrefixedStorage::new(PREFIX_PREORDER, &mut deps.storage);
-    let user_amount: Option<u128> = may_load(&preorder_store, sender_raw.as_slice())?;
+    let mut freemints_store = PrefixedStorage::new(PREFIX_FREEMINTS, &mut deps.storage);
 
-    if user_amount.is_none() {
-        return Err(StdError::generic_err(
-            "You don't have any preorder tokens".to_string(),
-        ));
-    }
-
-    let mut user_amount: u128 = user_amount.unwrap();
-    let mut mint_count = 0;
-
-    while user_amount >= 99 {
-        user_amount -= 99;
-        mint_count += 10;
-    }
-
-    while user_amount >= 69 {
-        user_amount -= 69;
-        mint_count += 5;
-    }
-
-    while user_amount > 19 {
-        user_amount -= 19;
-        mint_count += 1;
-    }
-
-    let mut msg_list: Vec<CosmosMsg> = vec![];
-
-    if user_amount > 0 {
-        msg_list.push(CosmosMsg::Bank(BankMsg::Send {
-            from_address: env.contract.address.clone(),
-            to_address: env.message.sender.clone(),
-            amount: vec![Coin {
-                amount: Uint128(user_amount),
-                denom: "uscrt".to_string(),
-            }],
-        }));
-    }
-
-    let left_amount: u16 = load(&deps.storage, COUNT_KEY)?;
-
-    if left_amount < mint_count {
-        return Err(StdError::generic_err(
-            "Not enough mints left to redeem".to_string(),
-        ));
-    }
-
-    do_mint(
-        deps,
-        env.clone(),
-        mint_count,
-        left_amount,
-        env.message.sender.clone(),
-        config,
-        msg_list,
-    )
+    save(&mut freemints_store, addr_raw.as_slice(), &true)?;
+    Ok(HandleResponse::default())
 }
 
 fn stamp_word<S: Storage, A: Api, Q: Querier>(
@@ -560,7 +457,7 @@ fn stamp_word<S: Storage, A: Api, Q: Querier>(
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
     if sender_raw != config.admin {
         return Err(StdError::generic_err(
-            "Only the admin or the minting contract can call this function, sorry!",
+            "Only the admin can call this function, sorry!",
         ));
     }
     let custom_err = format!("Not authorized to update metadata of token {}", token_id);
@@ -745,8 +642,12 @@ pub fn mint<S: Storage, A: Api, Q: Querier>(
     }
 
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+    let freemints_store = PrefixedStorage::new(PREFIX_FREEMINTS, &mut deps.storage);
 
-    if sender_raw.clone() != config.admin {
+    let user_can_mint_for_free: bool =
+        may_load(&freemints_store, sender_raw.as_slice())?.unwrap_or(false);
+
+    if sender_raw.clone() != config.admin && !user_can_mint_for_free {
         // admin can mint without paying
         if env.message.sent_funds.len() != 1 {
             return Err(StdError::generic_err(
@@ -841,7 +742,7 @@ pub fn mint<S: Storage, A: Api, Q: Querier>(
         may_load::<StoredRoyaltyInfo, _>(&deps.storage, DEFAULT_MINT_FUNDS_DISTRIBUTION_KEY)?
             .unwrap();
 
-    if sender_raw.clone() != config.admin {
+    if sender_raw.clone() != config.admin && !user_can_mint_for_free {
         // no royalties are given out when the admin mints, to prevent crashes
         for royalty in royalty_list.royalties.iter() {
             let decimal_places: u32 = royalty_list.decimal_places_in_rates.into();

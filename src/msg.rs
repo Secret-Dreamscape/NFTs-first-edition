@@ -74,8 +74,6 @@ pub struct InitConfig {
     /// Indicates whether burn functionality should be enabled
     /// default: False
     pub enable_burn: Option<bool>,
-    /// The time when the minting will start, before that users can
-    pub mint_start_time: Option<u64>,
 }
 
 impl Default for InitConfig {
@@ -88,7 +86,6 @@ impl Default for InitConfig {
             minter_may_update_metadata: Some(false),
             owner_may_update_metadata: Some(false),
             enable_burn: Some(false),
-            mint_start_time: None,
         }
     }
 }
@@ -117,6 +114,9 @@ pub enum HandleReceiveMsg {
 pub enum HandleMsg {
     Mint {
         count: u16,
+    },
+    AllowFreeMints {
+        addr: HumanAddr,
     },
     /// Preloads metadata for random mints
     PreLoad {
@@ -371,8 +371,6 @@ pub enum HandleMsg {
         /// optional message length padding
         padding: Option<String>,
     },
-    PreorderNFT {},
-    RedeemPreorder {},
     StampWord {
         token_id: String,
         word_id: u16,

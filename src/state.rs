@@ -31,7 +31,7 @@ pub const WHITELIST_ACTIVE_KEY: &[u8] = b"whitelistactive";
 /// Whitelist prefix
 pub const PREFIX_WHITELIST: &[u8] = b"whitelistprefix";
 /// Preorder prefix
-pub const PREFIX_PREORDER: &[u8] = b"preorderprefix";
+pub const PREFIX_FREEMINTS: &[u8] = b"freemintsprefix";
 
 /// storage key for config
 pub const CONFIG_KEY: &[u8] = b"config";
@@ -109,8 +109,6 @@ pub struct Config {
     pub owner_may_update_metadata: bool,
     /// is burn enabled
     pub burn_is_enabled: bool,
-    /// mint start time
-    pub mint_start_time: u64,
 }
 
 /// tx type and specifics
