@@ -49,8 +49,8 @@ pub const ID_BLOCK_SIZE: u32 = 64;
 
 /// Mint cost
 pub const MINT_COST_SINGLE: u128 = 29_000_000;
-pub const MINT_COST_BOOSTER: u128 = 99_000_000;
-pub const MINT_COST_PACK: u128 = 149_000_000;
+pub const MINT_COST_BOOSTER: u128 = 116_000_000;
+pub const MINT_COST_PACK: u128 = 174_000_000;
 
 /// Returns InitResult
 ///
