@@ -118,6 +118,12 @@ pub enum HandleMsg {
     AllowFreeMints {
         addr: HumanAddr,
     },
+    AllowStamping {
+        addr: HumanAddr,
+    },
+    ChangePrepurchaseOpen {
+        open: bool,
+    },
     /// Preloads metadata for random mints
     PreLoad {
         new_data: Vec<PreLoad>,

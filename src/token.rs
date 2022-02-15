@@ -59,12 +59,6 @@ pub struct Extension {
     /// a select list of trait_types that are in the private metadata.  This will only ever be used
     /// in public metadata
     pub protected_attributes: Option<Vec<String>>,
-    /// a list of all the words stamped to the card
-    pub stamped_words: Vec<u16>,
-    /// points count
-    pub stamped_words_points: u16,
-    /// number of words
-    pub number_of_words: u16,
 }
 
 /// attribute trait

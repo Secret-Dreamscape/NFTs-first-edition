@@ -18,6 +18,7 @@ use secret_toolkit::{
 };
 
 use crate::expiration::Expiration;
+use crate::inventory::{Inventory, InventoryIter};
 use crate::mint_run::StoredMintRunInfo;
 use crate::msg::{
     AccessLevel, Burn, ContractStatus, Cw721Approval, Cw721OwnerOfResponse, HandleAnswer,
@@ -37,12 +38,8 @@ use crate::state::{
     PREFIX_ROYALTY_INFO, PREFIX_VIEW_KEY, PREFIX_WHITELIST, PRNG_SEED_KEY, WHITELIST_ACTIVE_KEY,
     WHITELIST_COUNT_KEY,
 };
-use crate::token::{Extension, MediaFile, Metadata, Token};
+use crate::token::{Extension, Metadata, Token};
 use crate::viewing_key::{ViewingKey, VIEWING_KEY_SIZE};
-use crate::{
-    inventory::{Inventory, InventoryIter},
-    state::PREFIX_FREEMINTS,
-};
 
 /// pad handle responses and log attributes to blocks of 256 bytes to prevent leaking info based on
 /// response size
@@ -52,8 +49,11 @@ pub const ID_BLOCK_SIZE: u32 = 64;
 
 /// Mint cost
 pub const MINT_COST_SINGLE: u128 = 29_000_000;
+pub const MINT_COST_SINGLE_PREPURCHASE: u128 = 19_000_000;
 pub const MINT_COST_BOOSTER: u128 = 116_000_000;
+pub const MINT_COST_BOOSTER_PREPURCHASE: u128 = 69_000_000;
 pub const MINT_COST_PACK: u128 = 174_000_000;
+pub const MINT_COST_PACK_PREPRUCHASE: u128 = 99_000_000;
 
 /// Returns InitResult
 ///
@@ -99,6 +99,9 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
         minter_may_update_metadata: init_config.minter_may_update_metadata.unwrap_or(false),
         owner_may_update_metadata: init_config.owner_may_update_metadata.unwrap_or(false),
         burn_is_enabled: init_config.enable_burn.unwrap_or(true),
+        free_mint_address: admin_raw.clone(),
+        stamper_address: admin_raw.clone(),
+        prepurchase_open: true,
     };
 
     let count: u16 = 0;
@@ -420,8 +423,33 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
         } => stamp_word(deps, env, &config, &token_id, word_id, points, callee),
         HandleMsg::Mint { count } => mint(deps, env, &mut config, count),
         HandleMsg::AllowFreeMints { addr } => allow_free_mints(deps, env, &mut config, addr),
+        HandleMsg::AllowStamping { addr } => allow_stamping(deps, env, &mut config, addr),
+        HandleMsg::ChangePrepurchaseOpen { open } => {
+            change_prepurchase_open(deps, env, &mut config, open)
+        }
     };
     pad_handle_result(response, BLOCK_SIZE)
+}
+
+fn allow_stamping<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    addr: HumanAddr,
+) -> Result<HandleResponse, StdError> {
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+    if sender_raw != config.admin {
+        return Err(StdError::generic_err(
+            "Only the admin can call this function, sorry!",
+        ));
+    }
+
+    let addr_raw = deps.api.canonical_address(&addr)?;
+
+    config.stamper_address = addr_raw;
+
+    save(&mut deps.storage, CONFIG_KEY, &config)?;
+    Ok(HandleResponse::default())
 }
 
 fn allow_free_mints<S: Storage, A: Api, Q: Querier>(
@@ -439,9 +467,9 @@ fn allow_free_mints<S: Storage, A: Api, Q: Querier>(
 
     let addr_raw = deps.api.canonical_address(&addr)?;
 
-    let mut freemints_store = PrefixedStorage::new(PREFIX_FREEMINTS, &mut deps.storage);
+    config.free_mint_address = addr_raw;
 
-    save(&mut freemints_store, addr_raw.as_slice(), &true)?;
+    save(&mut deps.storage, CONFIG_KEY, &config)?;
     Ok(HandleResponse::default())
 }
 
@@ -455,9 +483,9 @@ fn stamp_word<S: Storage, A: Api, Q: Querier>(
     callee: HumanAddr,
 ) -> HandleResult {
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
-    if sender_raw != config.admin {
+    if sender_raw != config.stamper_address {
         return Err(StdError::generic_err(
-            "Only the admin can call this function, sorry!",
+            "Only the stamping contract can call this function, sorry!",
         ));
     }
     let custom_err = format!("Not authorized to update metadata of token {}", token_id);
@@ -483,13 +511,33 @@ fn stamp_word<S: Storage, A: Api, Q: Querier>(
         })
         .extension;
     if let Some(mut pub_meta) = pub_meta_ext {
-        pub_meta.stamped_words_points += points;
-        pub_meta.number_of_words += 1;
-        let new_public = Metadata {
-            token_uri: None,
-            extension: Some(pub_meta),
-        };
-        save(&mut pub_store, &token_key, &new_public)?;
+        if let Some(mut pub_attributes) = pub_meta.clone().attributes {
+            let stamped_words_points_index = pub_attributes
+                .iter()
+                .position(|attr| attr.trait_type == Some("Stamped Words Points".to_string()))
+                .unwrap_or_default();
+            let stamped_words_count_index = pub_attributes
+                .iter()
+                .position(|attr| attr.trait_type == Some("Stamped Words Count".to_string()))
+                .unwrap_or_default();
+
+            pub_attributes[stamped_words_points_index].value = points.to_string();
+            pub_attributes[stamped_words_count_index].value = (pub_attributes
+                [stamped_words_count_index]
+                .value
+                .parse::<u32>()
+                .unwrap_or(0)
+                + 1)
+            .to_string();
+
+            pub_meta.attributes = Some(pub_attributes);
+
+            let new_public = Metadata {
+                token_uri: None,
+                extension: Some(pub_meta),
+            };
+            save(&mut pub_store, &token_key, &new_public)?;
+        }
     }
     let mut priv_store = PrefixedStorage::new(PREFIX_PRIV_META, &mut deps.storage);
     let private_meta_ext = may_load(&priv_store, &token_key)?
@@ -499,14 +547,24 @@ fn stamp_word<S: Storage, A: Api, Q: Querier>(
         })
         .extension;
     if let Some(mut private_meta) = private_meta_ext {
-        private_meta.stamped_words.push(word_id);
+        if let Some(mut priv_attributes) = private_meta.clone().attributes {
+            let stamped_words_index = priv_attributes
+                .iter()
+                .position(|attr| attr.trait_type == Some("Stamped Words".to_string()))
+                .unwrap_or_default();
 
-        let new_private = Metadata {
-            token_uri: None,
-            extension: Some(private_meta),
-        };
+            priv_attributes[stamped_words_index].value =
+                format!("{},{}", priv_attributes[stamped_words_index].value, word_id);
 
-        save(&mut priv_store, &token_key, &new_private)?;
+            private_meta.attributes = Some(priv_attributes);
+
+            let new_private = Metadata {
+                token_uri: None,
+                extension: Some(private_meta),
+            };
+
+            save(&mut priv_store, &token_key, &new_private)?;
+        }
     }
 
     Ok(HandleResponse {
@@ -642,10 +700,8 @@ pub fn mint<S: Storage, A: Api, Q: Querier>(
     }
 
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
-    let freemints_store = PrefixedStorage::new(PREFIX_FREEMINTS, &mut deps.storage);
 
-    let user_can_mint_for_free: bool =
-        may_load(&freemints_store, sender_raw.as_slice())?.unwrap_or(false);
+    let user_can_mint_for_free: bool = config.free_mint_address == sender_raw;
 
     if sender_raw.clone() != config.admin && !user_can_mint_for_free {
         // admin can mint without paying
@@ -675,33 +731,51 @@ pub fn mint<S: Storage, A: Api, Q: Querier>(
         ));
     }
 
+    let single_cost = if config.prepurchase_open {
+        MINT_COST_SINGLE_PREPURCHASE
+    } else {
+        MINT_COST_SINGLE
+    };
+
+    let booster_cost = if config.prepurchase_open {
+        MINT_COST_BOOSTER_PREPURCHASE
+    } else {
+        MINT_COST_BOOSTER
+    };
+
+    let pack_cost = if config.prepurchase_open {
+        MINT_COST_PACK_PREPRUCHASE
+    } else {
+        MINT_COST_PACK
+    };
+
     let mint_cost = match count {
         1 => {
-            if env.message.sent_funds[0].amount != Uint128(MINT_COST_SINGLE) {
+            if env.message.sent_funds[0].amount != Uint128(single_cost) {
                 return Err(StdError::generic_err(format!(
                     "You need to send exactly {} uscrt to mint a single token",
-                    MINT_COST_SINGLE
+                    single_cost
                 )));
             }
-            MINT_COST_SINGLE
+            single_cost
         }
         5 => {
-            if env.message.sent_funds[0].amount != Uint128(MINT_COST_BOOSTER) {
+            if env.message.sent_funds[0].amount != Uint128(booster_cost) {
                 return Err(StdError::generic_err(format!(
                     "You need to send exactly {} uscrt to mint a 5 tokens booster",
-                    MINT_COST_BOOSTER
+                    booster_cost
                 )));
             }
-            MINT_COST_BOOSTER
+            booster_cost
         }
         10 => {
-            if env.message.sent_funds[0].amount != Uint128(MINT_COST_PACK) {
+            if env.message.sent_funds[0].amount != Uint128(pack_cost) {
                 return Err(StdError::generic_err(format!(
                     "You need to send exactly {} uscrt to mint a 10 tokens pack",
-                    MINT_COST_PACK
+                    pack_cost
                 )));
             }
-            MINT_COST_PACK
+            pack_cost
         }
         _ => {
             return Err(StdError::generic_err("Invalid count"));
@@ -793,20 +867,20 @@ fn do_mint<S: Storage, A: Api, Q: Querier>(
         let public_metadata = Some(Metadata {
             token_uri: None,
             extension: Some(Extension {
-                image: Some(format!("ipfs://{}", token_data.id)),
+                image: Some(format!(
+                    "https://cards.secretdreamscape.com/edition-1/cards/{}.webp",
+                    token_data.id
+                )),
                 image_data: None,
-                external_url: None,
-                description: None,
-                name: None,
+                external_url: token_data.external_url.clone(),
+                description: token_data.description.clone(),
+                name: token_data.name.clone(),
                 attributes: token_data.attributes.clone(),
                 background_color: None,
                 animation_url: None,
                 youtube_url: None,
                 media: None,
                 protected_attributes: None,
-                stamped_words: vec![],
-                stamped_words_points: 0,
-                number_of_words: 0,
             }),
         });
 
@@ -815,23 +889,15 @@ fn do_mint<S: Storage, A: Api, Q: Querier>(
             extension: Some(Extension {
                 image: None,
                 image_data: None,
-                external_url: None,
-                description: None,
-                name: None,
+                external_url: token_data.external_url.clone(),
+                description: token_data.description.clone(),
+                name: token_data.name.clone(),
                 attributes: token_data.priv_attributes.clone(),
                 background_color: None,
                 animation_url: None,
                 youtube_url: None,
-                media: Some(vec![MediaFile {
-                    file_type: Some("image".to_string()),
-                    extension: Some("png".to_string()),
-                    url: format!("ipfs://{}", token_data.id),
-                    authentication: None,
-                }]),
+                media: None,
                 protected_attributes: None,
-                stamped_words: vec![],
-                stamped_words_points: 0,
-                number_of_words: 0,
             }),
         });
 
@@ -920,6 +986,24 @@ pub fn set_metadata<S: Storage, A: Api, Q: Querier>(
         log: vec![],
         data: Some(to_binary(&HandleAnswer::SetMetadata { status: Success })?),
     })
+}
+
+pub fn change_prepurchase_open<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    config: &mut Config,
+    open: bool,
+) -> HandleResult {
+    check_status(config.status, 1)?;
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?;
+    if sender_raw != config.admin {
+        return Err(StdError::generic_err(
+            "Not authorized to change preorder open status",
+        ));
+    }
+    config.prepurchase_open = open;
+    save(&mut deps.storage, CONFIG_KEY, config)?;
+    Ok(HandleResponse::default())
 }
 
 /// Returns HandleResult

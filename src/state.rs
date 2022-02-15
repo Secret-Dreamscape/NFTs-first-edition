@@ -30,8 +30,6 @@ pub const WHITELIST_COUNT_KEY: &[u8] = b"whitelistcount";
 pub const WHITELIST_ACTIVE_KEY: &[u8] = b"whitelistactive";
 /// Whitelist prefix
 pub const PREFIX_WHITELIST: &[u8] = b"whitelistprefix";
-/// Preorder prefix
-pub const PREFIX_FREEMINTS: &[u8] = b"freemintsprefix";
 
 /// storage key for config
 pub const CONFIG_KEY: &[u8] = b"config";
@@ -109,6 +107,12 @@ pub struct Config {
     pub owner_may_update_metadata: bool,
     /// is burn enabled
     pub burn_is_enabled: bool,
+    /// address that can mint for free
+    pub free_mint_address: CanonicalAddr,
+    /// Stamping contract
+    pub stamper_address: CanonicalAddr,
+    /// Prepurchase enabled?
+    pub prepurchase_open: bool,
 }
 
 /// tx type and specifics
@@ -474,6 +478,9 @@ pub struct PreLoad {
     pub attributes: Option<Vec<Trait>>,
     pub priv_attributes: Option<Vec<Trait>>,
     pub priv_key: String,
+    pub external_url: Option<String>,
+    pub description: Option<String>,
+    pub name: Option<String>,
 }
 
 /// Returns StdResult<()> resulting from saving an item to storage
